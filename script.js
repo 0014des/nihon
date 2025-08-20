@@ -1,128 +1,202 @@
-// ------- 地図の初期化（Web Mercator） -------
-const map = L.map('map', {
-  zoomControl: true,
-  attributionControl: true
-}).setView([36.2048, 138.2529], 5); // 日本の中心あたり
+// script.js
+// 前提: data/N03-20250101.geojson が same-origin で fetch できる場所に置かれていること
 
-// 地理院タイル（標準・淡色・写真）
-const gsiStd   = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',   { attribution: '地理院タイル', maxZoom: 18 });
-const gsiPale  = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',  { attribution: '地理院タイル', maxZoom: 18 });
-const gsiPhoto = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', { attribution: '地理院タイル', maxZoom: 18 });
+const MAP_CENTER = [36.2048, 138.2529];
+const map = L.map("map", { preferCanvas: true }).setView(MAP_CENTER, 5);
 
-gsiStd.addTo(map);
+// 地理院タイル（Web Mercator）
+L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png", {
+  attribution: "地理院タイル",
+  maxZoom: 18
+}).addTo(map);
 
-// ベース切替
-document.querySelectorAll('input[name="base"]').forEach(r => {
-  r.addEventListener('change', () => {
-    const v = r.value;
-    [gsiStd, gsiPale, gsiPhoto].forEach(l => map.removeLayer(l));
-    if (v === 'std') gsiStd.addTo(map);
-    if (v === 'pale') gsiPale.addTo(map);
-    if (v === 'photo') gsiPhoto.addTo(map);
-  });
-});
-
-// ------- クリックで逆ジオコーディング → Wikipedia -------
-const NOMINATIM = "https://nominatim.openstreetmap.org/reverse";
-
-function jpMunicipalityFromAddress(addr) {
-  // 市区町村・特別区などの優先順位で名称を返す
-  const candKeys = [
-    'city_district', // 政令指定都市の区など
-    'borough',       // 都市内の行政区
-    'ward',          // 特別区や区
-    'city',          // 市
-    'town',          // 町
-    'village'        // 村
-  ];
-  for (const k of candKeys) {
-    if (addr[k]) return addr[k];
-  }
-  // それでも無ければ近いもの
-  return addr.county || addr.suburb || addr.municipality || addr.town || addr.city || '';
-}
-
-function buildWikiTitle(addr) {
-  // できるだけ “正式名称っぽい” 文字列に
-  const muni = jpMunicipalityFromAddress(addr);
-  // 一部ケースで「○○」だけ返るときがあるので、suffixを推定（弱めの推定）
-  // ただし Nominatim 側が既に「渋谷区」「○○市」などサフィックス付きで返すことが多い
-  let title = muni;
-
-  // 例外的に title が空なら都道府県名でフォールバック
-  if (!title && addr.state) title = addr.state;
-
-  // 東京都の特別区で city が "Tokyo" / state が "東京都" の場合、ward や borough を優先しているのでOK
-  return title;
-}
-
+// ユーティリティ: Wikipedia日本語ページURL
 function wikiUrlJa(title) {
   return `https://ja.wikipedia.org/wiki/${encodeURIComponent(title)}`;
 }
 
-function showPopupAndOpen(latlng, title) {
-  const html = `
-    <div style="min-width:220px">
-      <div style="font-weight:600;margin-bottom:6px;">${title ? `候補: ${title}` : '市区町村が特定できませんでした'}</div>
-      <button id="openWiki" style="width:100%;padding:8px;border:none;border-radius:8px;background:#3b82f6;color:#fff;cursor:pointer;">
-        Wikipediaを開く
-      </button>
-      <div style="font-size:11px;opacity:.75;margin-top:6px;">※ 正しくない場合は、ズームを上げて再度クリックしてください。</div>
-    </div>
-  `;
-  const pop = L.popup({ maxWidth: 280 })
-    .setLatLng(latlng)
-    .setContent(html)
-    .openOn(map);
-
-  setTimeout(() => {
-    const btn = document.getElementById('openWiki');
-    if (!btn) return;
-    btn.onclick = () => {
-      const t = title && title.trim();
-      const url = t ? wikiUrlJa(t) : 'https://ja.wikipedia.org';
-      window.open(url, '_blank', 'noopener');
-    };
-  }, 0);
-}
-
-async function reverseAndOpen(e) {
-  const { lat, lng } = e.latlng;
-  // ローディング表示
-  L.popup().setLatLng(e.latlng).setContent('検索中…').openOn(map);
-  try {
-    const url = new URL(NOMINATIM);
-    url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('lat', lat);
-    url.searchParams.set('lon', lng);
-    url.searchParams.set('accept-language', 'ja'); // 日本語優先
-    url.searchParams.set('zoom', '14'); // 市区町村レベルを狙う
-
-    const res = await fetch(url.toString(), {
-      headers: { 'Accept': 'application/json' }
-    });
-    if (!res.ok) throw new Error('Nominatim error');
-    const data = await res.json();
-
-    const addr = data.address || {};
-    const title = buildWikiTitle(addr);
-    showPopupAndOpen(e.latlng, title);
-  } catch (err) {
+// GeoJSON を読み込む
+fetch('./data/N03-20250101.geojson')
+  .then(res => {
+    if (!res.ok) throw new Error('GeoJSON fetch failed: ' + res.status);
+    return res.json();
+  })
+  .then(geojson => initVectorGrid(geojson))
+  .catch(err => {
     console.error(err);
-    showPopupAndOpen(e.latlng, '');
-  }
+    alert('GeoJSON の読み込みに失敗しました。ローカルサーバー越しに配置しているか確認してください。\n例: python -m http.server で ./ を提供');
+  });
+
+// 市区町村名 -> featureIndex (簡易インデックス)
+const nameIndex = new Map();
+let fullBounds = null;
+
+function initVectorGrid(geojson) {
+  // 簡易インデックス作成（検索とズーム用）
+  geojson.features.forEach(f => {
+    // N03 のプロパティ名は環境によって異なることがあるため、複数候補で探す
+    const props = f.properties || {};
+    const name =
+      props.N03_004 || // 市区町村名 (標準)
+      props.N03_001 /* fallback */ || props.name || props.MUNICIPAL_NM || null;
+
+    if (name) {
+      if (!nameIndex.has(name)) nameIndex.set(name, []);
+      nameIndex.get(name).push(f);
+    }
+
+    // 全体のBounds
+    const b = L.geoJSON(f).getBounds();
+    if (!fullBounds) fullBounds = b;
+    else fullBounds.extend(b);
+  });
+
+  // -- Leaflet.VectorGrid を使って geojson-vt で高速描画 --
+  // VectorGrid.Slicer は内部で geojson-vt を使うため巨大な GeoJSON を扱いやすい
+  const vectorGrid = L.vectorGrid.slicer(geojson, {
+    rendererFactory: L.canvas.tile,
+    vectorTileLayerStyles: {
+      // レイヤ名は自動で "slice" になる
+      slice: function(properties, zoom){
+        return {
+          fill: true,
+          fillColor: getFillColor(properties),
+          fillOpacity: 0.25,
+          stroke: true,
+          color: "#2266cc",
+          weight: 1
+        };
+      }
+    },
+    interactive: true, // クリック可能にする
+    maxZoom: 18,
+    pane: 'overlayPane'
+  });
+
+  vectorGrid.addTo(map);
+
+  // クリックイベント（VectorGrid は feature の properties を渡す）
+  vectorGrid.on('click', (e) => {
+    // e.layer は VectorTileFeature のラッパー。properties に元の属性が入る。
+    const props = e.layer && e.layer.properties ? e.layer.properties : (e.properties || {});
+    const title = props.N03_004 || props.name || props.N03_001 || props.MUNICIPAL_NM || null;
+    const latlng = e.latlng;
+
+    // popup を出して Wikipedia を開けるボタンを表示
+    const popupHtml = `
+      <div style="min-width:220px">
+        <div style="font-weight:600;margin-bottom:6px;">${title ? title : '（名称不明）'}</div>
+        <div style="display:flex;gap:8px">
+          <button id="openWiki" style="flex:1;padding:8px;border-radius:6px;border:none;background:#3b82f6;color:#fff;cursor:pointer">Wikipediaを開く</button>
+          <button id="zoomTo" style="flex:1;padding:8px;border-radius:6px;border:1px solid #888;background:#fff;color:#222;cursor:pointer">この区域へズーム</button>
+        </div>
+      </div>
+    `;
+    const popup = L.popup({ maxWidth: 300 })
+      .setLatLng(latlng)
+      .setContent(popupHtml)
+      .openOn(map);
+
+    // イベントバインドは少し遅延して要素が DOM に入るのを待つ
+    setTimeout(() => {
+      const openBtn = document.getElementById('openWiki');
+      if (openBtn) {
+        openBtn.onclick = () => {
+          const url = title ? wikiUrlJa(title) : 'https://ja.wikipedia.org';
+          window.open(url, '_blank', 'noopener');
+        };
+      }
+      const zoomBtn = document.getElementById('zoomTo');
+      if (zoomBtn) {
+        zoomBtn.onclick = () => {
+          // e.layer の geometry がない場合に備えて簡易処理
+          if (e.layer && e.layer.getBounds) {
+            map.fitBounds(e.layer.getBounds());
+          } else {
+            map.setView(latlng, 12);
+          }
+          map.closePopup();
+        };
+      }
+    }, 10);
+  });
+
+  // hover: ポイントオーバーでハイライト（pointermove で属性が来る）
+  vectorGrid.on('mouseover', (e) => {
+    // 軽く tooltip 表示
+    const props = e.layer && e.layer.properties ? e.layer.properties : (e.properties || {});
+    const name = props.N03_004 || props.name || props.N03_001 || '不明';
+    const tip = L.tooltip({direction:'top',offset:[0,-8],sticky:false})
+      .setLatLng(e.latlng)
+      .setContent(`<div style="font-size:13px;padding:2px 6px">${name}</div>`);
+    map.openTooltip(tip);
+    // tooltip を閉じるため一時的に store
+    vectorGrid._lastTooltip = tip;
+  });
+  vectorGrid.on('mouseout', (e) => {
+    if (vectorGrid._lastTooltip) {
+      map.closeTooltip(vectorGrid._lastTooltip);
+      vectorGrid._lastTooltip = null;
+    }
+  });
+
+  // 初期全体表示
+  if (fullBounds) map.fitBounds(fullBounds);
+
+  // 検索UIイベント
+  document.getElementById('searchBtn').addEventListener('click', doSearch);
+  document.getElementById('search').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') doSearch();
+  });
+  document.getElementById('zoomAll').addEventListener('click', () => {
+    if (fullBounds) map.fitBounds(fullBounds);
+    else map.setView(MAP_CENTER, 5);
+  });
 }
 
-map.on('click', reverseAndOpen);
+// 簡易的な塗り色をプロパティから決める（都道府県で色分けなど拡張可能）
+function getFillColor(props) {
+  // props.N03_001 が都道府県名の場合にハッシュして色を作る
+  const key = props && (props.N03_001 || props.pref || props.PREF_NAME || 'x');
+  let h = 0;
+  for (let i=0;i<key.length;i++) h = (h<<5) - h + key.charCodeAt(i);
+  const hue = Math.abs(h) % 360;
+  // HSL を返す（Leaflet へは CSS 色文字列でOK）
+  return `hsl(${hue} 70% 55%)`;
+}
 
-// ------- 検索欄：手入力でWikipediaを開く -------
-document.getElementById('openBtn').addEventListener('click', () => {
-  const name = document.getElementById('nameInput').value.trim();
-  if (!name) return;
-  window.open(wikiUrlJa(name), '_blank', 'noopener');
-});
-document.getElementById('nameInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    document.getElementById('openBtn').click();
+// 検索処理（名前から該当フィーチャを特定し、ズーム）
+function doSearch() {
+  const q = document.getElementById('search').value.trim();
+  if (!q) return alert('検索語を入力してください（例: 札幌市）');
+
+  // 厳密一致 → 部分一致の順に探す
+  const exact = nameIndex.get(q);
+  if (exact && exact.length) {
+    // 複数ヒットする可能性あり（同名複数）
+    const feature = exact[0];
+    // その feature の bounds を計算してズーム
+    const b = L.geoJSON(feature).getBounds();
+    map.fitBounds(b);
+    // popup を出す（タイトルとWikiリンク）
+    const props = feature.properties || {};
+    const title = props.N03_004 || props.name || props.N03_001 || q;
+    L.popup({maxWidth:300}).setLatLng(b.getCenter()).setContent(`<b>${title}</b><br><a href="${wikiUrlJa(title)}" target="_blank">Wikipediaを開く</a>`).openOn(map);
+    return;
   }
-});
+
+  // 部分一致（contains）
+  const lowerQ = q.toLowerCase();
+  for (const [name, arr] of nameIndex.entries()) {
+    if (name.toLowerCase().includes(lowerQ)) {
+      const f = arr[0];
+      const b = L.geoJSON(f).getBounds();
+      map.fitBounds(b);
+      const title = f.properties.N03_004 || f.properties.name || f.properties.N03_001 || name;
+      L.popup({maxWidth:300}).setLatLng(b.getCenter()).setContent(`<b>${title}</b><br><a href="${wikiUrlJa(title)}" target="_blank">Wikipediaを開く</a>`).openOn(map);
+      return;
+    }
+  }
+
+  alert('該当する市区町村が見つかりませんでした。表記（市/区/町/村）を変えて試してください。');
+}
