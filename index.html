@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>市区町村クリック → Wikipedia を開く（日本地図）</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Leaflet -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>日本地図（クリックで市区町村のWikipediaを開く）</h1>
+      <div class="search">
+        <input id="nameInput" type="text" placeholder="例: 札幌市 / 渋谷区 / 太宰府市" />
+        <button id="openBtn" type="button">Wikipediaを開く</button>
+      </div>
+    </header>
+
+    <div id="map" aria-label="地図"></div>
+
+    <footer class="app-footer">
+      <span>地理院タイル × Leaflet × Nominatim (OSM)。地図をクリックするとその周辺の市区町村Wikipediaを開けます。</span>
+      <div class="controls">
+        <label><input type="radio" name="base" value="std" checked> 標準</label>
+        <label><input type="radio" name="base" value="pale"> 淡色</label>
+        <label><input type="radio" name="base" value="photo"> 写真</label>
+      </div>
+    </footer>
+
+    <!-- Leaflet -->
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIJ6odY6LVmZ5FZbxG8J2v6LVpX8lv0="
+      crossorigin=""
+    ></script>
+    <script src="./script.js"></script>
+  </body>
+</html>
